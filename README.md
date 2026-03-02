@@ -27,8 +27,8 @@
 
 ### 环境要求
 
-- Python 3.11+
-- Node.js 18+
+- Python 3.11+ (推荐使用 conda 管理)
+- Node.js 24+ (推荐使用 nvm 管理)
 - Git
 
 ### 后端运行
@@ -37,9 +37,11 @@
 # 进入后端目录
 cd backend
 
-# 创建并激活虚拟环境
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+# 创建 conda 虚拟环境
+conda create -n student_mgmt python=3.11
+
+# 激活虚拟环境
+conda activate student_mgmt
 
 # 安装依赖
 pip install -r requirements.txt
@@ -60,6 +62,9 @@ ENV=develop uvicorn app.main:app --reload --port 8000
 ### 前端运行
 
 ```bash
+# 使用 nvm 切换到 Node.js 24
+nvm use 24
+
 # 进入前端目录
 cd frontend
 
@@ -137,7 +142,7 @@ student_management/
 ```bash
 # 进入后端目录并激活虚拟环境
 cd backend
-source venv/bin/activate
+conda activate student_mgmt
 
 # 开发环境运行
 ENV=develop uvicorn app.main:app --reload --port 8000
@@ -163,6 +168,9 @@ alembic downgrade -1                              # 回滚迁移
 ### 前端开发
 
 ```bash
+# 确保使用 Node.js 24
+nvm use 24
+
 # 进入前端目录
 cd frontend
 
@@ -217,34 +225,239 @@ npm run build
 - 测试环境: `backend/data/test.db`
 - 生产环境: `backend/data/prod.db`
 
+### 数据库初始化
+
+```bash
+# 首次运行时初始化数据库
+cd backend
+conda activate student_mgmt
+
+# 初始化 Alembic（仅首次）
+alembic init alembic
+
+# 创建数据库目录
+mkdir -p data
+
+# 应用所有迁移，创建表结构
+alembic upgrade head
+
+# 如果需要初始数据，运行种子脚本
+python scripts/seed_data.py
+```
+
 ### 数据库迁移
 
 ```bash
-# 创建新迁移
 cd backend
+conda activate student_mgmt
+
+# 创建新迁移（自动检测模型变化）
 alembic revision --autogenerate -m "add new table"
 
-# 应用迁移
+# 创建空迁移（需要手动编写）
+alembic revision -m "custom migration"
+
+# 应用所有待处理的迁移
 alembic upgrade head
 
-# 回滚迁移
+# 应用到特定版本
+alembic upgrade <revision_id>
+
+# 回滚一个版本
 alembic downgrade -1
+
+# 回滚到特定版本
+alembic downgrade <revision_id>
+
+# 回滚所有迁移（清空数据库）
+alembic downgrade base
 
 # 查看迁移历史
 alembic history
 
-# 查看当前版本
+# 查看详细历史
+alembic history --verbose
+
+# 查看当前数据库版本
 alembic current
+
+# 查看待应用的迁移
+alembic show head
 ```
 
-### 数据备份
+### 数据库查询和管理
 
 ```bash
-# 备份数据库
-cp backend/data/prod.db backups/prod_$(date +%Y%m%d).db
+cd backend
 
-# 恢复数据库
+# 使用 SQLite 命令行工具查看数据库
+sqlite3 data/develop.db
+
+# SQLite 常用命令（在 sqlite3 交互式环境中）
+.tables                          # 查看所有表
+.schema students                 # 查看表结构
+.headers on                      # 显示列名
+.mode column                     # 列模式显示
+SELECT * FROM students LIMIT 5;  # 查询数据
+.quit                           # 退出
+
+# 一行命令查询
+sqlite3 data/develop.db "SELECT * FROM students;"
+
+# 导出数据为 SQL
+sqlite3 data/develop.db .dump > backup.sql
+
+# 导出数据为 CSV
+sqlite3 data/develop.db -header -csv "SELECT * FROM students;" > students.csv
+
+# 查看数据库大小
+du -h data/develop.db
+
+# 压缩数据库（减少文件大小）
+sqlite3 data/develop.db "VACUUM;"
+```
+
+### 数据备份与恢复
+
+```bash
+# 创建备份目录
+mkdir -p backups
+
+# 备份单个数据库
+cp backend/data/prod.db backups/prod_$(date +%Y%m%d_%H%M%S).db
+
+# 备份所有环境数据库
+cp backend/data/*.db backups/
+
+# 使用 SQLite dump 备份（推荐）
+sqlite3 backend/data/prod.db .dump > backups/prod_$(date +%Y%m%d).sql
+
+# 压缩备份
+tar -czf backups/db_backup_$(date +%Y%m%d).tar.gz backend/data/*.db
+
+# 从 .db 文件恢复
 cp backups/prod_20240101.db backend/data/prod.db
+
+# 从 SQL dump 恢复
+sqlite3 backend/data/prod.db < backups/prod_20240101.sql
+
+# 定期自动备份（添加到 crontab）
+# 每天凌晨 2 点备份
+# 0 2 * * * /path/to/backup_script.sh
+```
+
+### 数据库重置
+
+```bash
+cd backend
+conda activate student_mgmt
+
+# 警告：以下操作会删除所有数据！
+
+# 方法 1: 回滚所有迁移并重新应用
+alembic downgrade base
+alembic upgrade head
+
+# 方法 2: 删除数据库文件并重新创建
+rm data/develop.db
+alembic upgrade head
+
+# 方法 3: 使用脚本重置（如果有）
+python scripts/reset_database.py
+
+# 重置后填充测试数据
+python scripts/seed_data.py
+```
+
+### 数据库性能优化
+
+```bash
+# 分析数据库
+sqlite3 data/prod.db "ANALYZE;"
+
+# 查看查询计划
+sqlite3 data/prod.db "EXPLAIN QUERY PLAN SELECT * FROM students WHERE student_id = '2024001';"
+
+# 创建索引（在迁移中）
+alembic revision -m "add indexes for performance"
+# 然后在生成的迁移文件中添加:
+# op.create_index('idx_student_id', 'students', ['student_id'])
+# op.create_index('idx_email', 'students', ['email'])
+
+# 重建索引
+sqlite3 data/prod.db "REINDEX;"
+```
+
+### 环境间数据迁移
+
+```bash
+# 从开发环境复制数据到测试环境
+cp backend/data/develop.db backend/data/test.db
+
+# 导出开发环境数据
+sqlite3 backend/data/develop.db .dump > dev_export.sql
+
+# 导入到测试环境
+sqlite3 backend/data/test.db < dev_export.sql
+
+# 仅导出数据（不包含表结构）
+sqlite3 backend/data/develop.db <<EOF
+.mode insert students
+SELECT * FROM students;
+EOF
+```
+
+### 切换到 PostgreSQL/MySQL
+
+如果需要从 SQLite 迁移到 PostgreSQL 或 MySQL：
+
+```bash
+# 1. 修改 .env 文件中的 DATABASE_URL
+# PostgreSQL:
+# DATABASE_URL=postgresql://user:password@localhost:5432/dbname
+
+# MySQL:
+# DATABASE_URL=mysql://user:password@localhost:3306/dbname
+
+# 2. 安装相应的数据库驱动
+pip install psycopg2-binary  # PostgreSQL
+# 或
+pip install pymysql          # MySQL
+
+# 3. 使用工具迁移数据
+# pgloader（SQLite -> PostgreSQL）
+pgloader sqlite://backend/data/prod.db postgresql://user:password@localhost/dbname
+
+# 4. 运行迁移验证表结构
+alembic upgrade head
+```
+
+### 常见问题排查
+
+```bash
+# 检查数据库连接
+python -c "from app.database import engine; print(engine.url)"
+
+# 检查表是否存在
+sqlite3 data/develop.db ".tables"
+
+# 检查迁移版本一致性
+alembic current
+alembic heads
+
+# 修复迁移版本不一致
+alembic stamp head
+
+# 查看数据库完整性
+sqlite3 data/develop.db "PRAGMA integrity_check;"
+
+# 查看数据库统计信息
+sqlite3 data/develop.db <<EOF
+SELECT name, COUNT(*) as count 
+FROM sqlite_master 
+WHERE type='table' 
+GROUP BY name;
+EOF
 ```
 
 ## 🔐 环境配置
@@ -283,7 +496,7 @@ VITE_APP_TITLE=学生信息管理系统-开发环境
 
 ```bash
 cd backend
-source venv/bin/activate
+conda activate student_mgmt
 
 # 运行所有测试
 pytest
@@ -305,6 +518,9 @@ pytest --cov=app --cov-report=html
 ### 前端测试
 
 ```bash
+# 确保使用 Node.js 24
+nvm use 24
+
 cd frontend
 
 # 运行测试
